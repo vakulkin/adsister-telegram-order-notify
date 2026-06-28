@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Main plugin controller.
  *
@@ -9,69 +10,73 @@
  * @package TelegramOrderNotify
  */
 
-declare( strict_types=1 );
+declare(strict_types=1);
 
 namespace TON;
 
-if ( ! defined( 'ABSPATH' ) ) {
-	exit;
+if (! defined('ABSPATH')) {
+    exit;
 }
 
 /**
  * Class Plugin
  */
-final class Plugin {
+final class Plugin
+{
+    /**
+     * Singleton instance.
+     *
+     * @var Plugin|null
+     */
+    private static ?Plugin $instance = null;
 
-	/**
-	 * Singleton instance.
-	 *
-	 * @var Plugin|null
-	 */
-	private static ?Plugin $instance = null;
+    /**
+     * @var Telegram_Client
+     */
+    private Telegram_Client $telegram_client;
 
-	/**
-	 * @var Telegram_Client
-	 */
-	private Telegram_Client $telegram_client;
+    /**
+     * @var Settings
+     */
+    private Settings $settings;
 
-	/**
-	 * @var Settings
-	 */
-	private Settings $settings;
+    /**
+     * @var Order_Notification
+     */
+    private Order_Notification $order_notification;
 
-	/**
-	 * @var Order_Notification
-	 */
-	private Order_Notification $order_notification;
+    /**
+     * Private constructor — use instance() instead.
+     */
+    private function __construct()
+    {
+    }
 
-	/**
-	 * Private constructor — use instance() instead.
-	 */
-	private function __construct() {}
+    /**
+     * Returns (and creates on first call) the singleton instance.
+     *
+     * @return self
+     */
+    public static function instance(): self
+    {
+        if (null === self::$instance) {
+            self::$instance = new self();
+            self::$instance->init();
+        }
 
-	/**
-	 * Returns (and creates on first call) the singleton instance.
-	 *
-	 * @return self
-	 */
-	public static function instance(): self {
-		if ( null === self::$instance ) {
-			self::$instance = new self();
-			self::$instance->init();
-		}
+        return self::$instance;
+    }
 
-		return self::$instance;
-	}
+    /**
+     * Wires up all components.
+     */
+    private function init(): void
+    {
+        $this->telegram_client    = new Telegram_Client();
+        $this->settings           = new Settings($this->telegram_client);
+        $this->order_notification = new Order_Notification($this->telegram_client);
 
-	/**
-	 * Wires up all components.
-	 */
-	private function init(): void {
-		$this->telegram_client    = new Telegram_Client();
-		$this->settings           = new Settings( $this->telegram_client );
-		$this->order_notification = new Order_Notification( $this->telegram_client );
-
-		$this->settings->register_hooks();
-		$this->order_notification->register_hooks();
-	}
+        $this->settings->register_hooks();
+        $this->order_notification->register_hooks();
+    }
 }
