@@ -46,6 +46,11 @@ final class Plugin
     private Order_Notification $order_notification;
 
     /**
+     * @var External_Notification
+     */
+    private External_Notification $external_notification;
+
+    /**
      * Private constructor — use instance() instead.
      */
     private function __construct()
@@ -72,11 +77,13 @@ final class Plugin
      */
     private function init(): void
     {
-        $this->telegram_client    = new Telegram_Client();
-        $this->settings           = new Settings($this->telegram_client);
-        $this->order_notification = new Order_Notification($this->telegram_client);
+        $this->telegram_client       = new Telegram_Client();
+        $this->settings              = new Settings($this->telegram_client);
+        $this->order_notification    = new Order_Notification($this->telegram_client);
+        $this->external_notification = new External_Notification($this->telegram_client);
 
         $this->settings->register_hooks();
         $this->order_notification->register_hooks();
+        $this->external_notification->register_hooks();
     }
 }

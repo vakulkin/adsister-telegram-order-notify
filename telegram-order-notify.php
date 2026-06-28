@@ -23,6 +23,7 @@ define('TON_PLUGIN_DIR', plugin_dir_path(__FILE__));
 
 require_once TON_PLUGIN_DIR . 'includes/class-telegram-client.php';
 require_once TON_PLUGIN_DIR . 'includes/class-order-notification.php';
+require_once TON_PLUGIN_DIR . 'includes/class-external-notification.php';
 require_once TON_PLUGIN_DIR . 'includes/class-settings.php';
 require_once TON_PLUGIN_DIR . 'includes/class-plugin.php';
 
