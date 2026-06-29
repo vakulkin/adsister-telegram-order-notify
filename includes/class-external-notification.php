@@ -40,7 +40,7 @@ final class External_Notification
      */
     public function register_hooks(): void
     {
-        add_action('rest_api_init', [ $this, 'register_routes' ]);
+        add_action('rest_api_init', [$this, 'register_routes']);
     }
 
     /**
@@ -50,7 +50,7 @@ final class External_Notification
     {
         register_rest_route('ton/v1', '/notify', [
             'methods'             => \WP_REST_Server::READABLE,
-            'callback'            => [ $this, 'handle_request' ],
+            'callback'            => [$this, 'handle_request'],
             'permission_callback' => '__return_true', // Publicly accessible
         ]);
     }
@@ -68,7 +68,6 @@ final class External_Notification
         $key         = $request->get_param('key') ?? '';
         $size_ml     = $request->get_param('size_ml') ?? '';
         $atomizer_id = $request->get_param('atomizer_id') ?? '';
-        $label       = $request->get_param('label') ?? '';
 
         // If phone is empty, it's considered an error based on user instructions.
         if (empty($phone)) {
@@ -85,9 +84,9 @@ final class External_Notification
         }
 
         $site_name = get_bloginfo('name');
-        
+
         $lines = [
-            sprintf('<b>Швидке замовлення — %s</b>', esc_html($site_name)),
+            sprintf('<b>Запит на товар — %s</b>', esc_html($site_name)),
             '---',
             '<b>Телефон:</b> ' . esc_html(trim((string)$phone)),
         ];
@@ -100,9 +99,6 @@ final class External_Notification
             $lines[] = '<b>ID Товару:</b> ' . $product_info;
         }
 
-        if (!empty($label)) {
-            $lines[] = '<b>Мітка:</b> ' . esc_html((string)$label);
-        }
         if (!empty($size_ml)) {
             $lines[] = '<b>Об\'єм (мл):</b> ' . esc_html((string)$size_ml);
         }
@@ -138,19 +134,19 @@ final class External_Notification
     private function send_response(bool $success, string $message = '')
     {
         $response = new \WP_REST_Response();
-        
+
         if ($success) {
-            $response->set_data([ 'success' => true ]);
+            $response->set_data(['success' => true]);
         } else {
             $response->set_data([
                 'success' => false,
                 'message' => $message,
             ]);
         }
-        
+
         // Ensure CORS header is present as requested
         $response->header('Access-Control-Allow-Origin', '*');
-        
+
         return $response;
     }
 }
