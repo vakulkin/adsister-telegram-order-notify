@@ -51,12 +51,16 @@ final class Order_Notification
     public function on_new_order(\WC_Order $order): void
     {
         $message = $this->build_message($order);
-        $result  = $this->client->send_message($message);
 
-        if (is_wp_error($result)) {
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-            error_log('[TON] Failed to send Telegram notification: ' . $result->get_error_message());
-        }
+        /**
+         * Filter the Telegram order notification message.
+         *
+         * @param string    $message Formatted HTML message.
+         * @param \WC_Order $order   WooCommerce order instance.
+         */
+        $message = (string) apply_filters('ton_order_notification_message', $message, $order);
+
+        Message_Formatter::send_and_log($this->client, $message, 'order');
     }
 
     /**
@@ -65,12 +69,12 @@ final class Order_Notification
      * @param \WC_Order $order
      * @return string
      */
-    private function build_message(\WC_Order $order): string
+    public function build_message(\WC_Order $order): string
     {
-        $site_name = get_bloginfo('name');
         $order_id  = $order->get_id();
         $order_url = esc_url($order->get_edit_order_url());
         $status    = wc_get_order_status_name($order->get_status());
+        $currency  = $order->get_currency();
 
         $date_created = $order->get_date_created();
         $date         = ($date_created instanceof \WC_DateTime)
@@ -83,8 +87,8 @@ final class Order_Notification
         $email     = $billing['email'] ?? '';
         $phone     = $billing['phone'] ?? '';
 
-        $billing_addr  = $this->format_address($billing);
-        $shipping_addr = $this->format_address($order->get_address('shipping')) ?: $billing_addr;
+        $billing_addr  = Message_Formatter::format_address($billing);
+        $shipping_addr = Message_Formatter::format_address($order->get_address('shipping')) ?: $billing_addr;
 
         // Order items.
         $item_lines = [];
@@ -93,7 +97,7 @@ final class Order_Notification
             $product  = $item->get_product();
             $sku      = ($product instanceof \WC_Product) ? $product->get_sku() : '';
             $sku_text = $sku ? ' (SKU: ' . esc_html($sku) . ')' : '';
-            $total    = $this->format_price((float) $item->get_total(), $order->get_currency());
+            $total    = Message_Formatter::format_price((float) $item->get_total(), $currency);
 
             $item_lines[] = sprintf(
                 '  - %1$s%2$s x%3$d: %4$s',
@@ -102,109 +106,96 @@ final class Order_Notification
                 (int) $item->get_quantity(),
                 $total
             );
+
+            // Extract item metadata: Size, Atomizer, Tab, Key, etc.
+            $details = Item_Data_Extractor::get_item_details_lines($item);
+            foreach ($details as $detail_line) {
+                $item_lines[] = $detail_line;
+            }
         }
 
         // Totals.
-        $subtotal       = $this->format_price((float) $order->get_subtotal(), $order->get_currency());
-        $shipping_total = $this->format_price((float) $order->get_shipping_total(), $order->get_currency());
-        $grand_total    = $this->format_price((float) $order->get_total(), $order->get_currency());
+        $subtotal       = Message_Formatter::format_price((float) $order->get_subtotal(), $currency);
+        $shipping_total = Message_Formatter::format_price((float) $order->get_shipping_total(), $currency);
+        $grand_total    = Message_Formatter::format_price((float) $order->get_total(), $currency);
 
         // Optional lines.
         $discount_total = (float) $order->get_discount_total();
         $discount_line  = '';
         if ($discount_total > 0) {
-            $discount_line = "\n<b>Discount:</b> -" . $this->format_price($discount_total, $order->get_currency());
+            $discount_line = "\n<b>" . esc_html__('Знижка', 'telegram-order-notify') . ':</b> -'
+                . Message_Formatter::format_price($discount_total, $currency);
         }
 
         $coupons      = $order->get_coupon_codes();
         $coupons_line = $coupons
-            ? "\n<b>Coupons:</b> " . esc_html(implode(', ', $coupons))
+            ? "\n<b>" . esc_html__('Купони', 'telegram-order-notify') . ':</b> ' . esc_html(implode(', ', $coupons))
             : '';
 
         $customer_note = $order->get_customer_note();
         $note_line     = $customer_note
-            ? "\n<b>Customer note:</b> " . esc_html($customer_note)
+            ? "\n<b>" . esc_html__('Примітка клієнта', 'telegram-order-notify') . ':</b> ' . esc_html($customer_note)
             : '';
 
-        // Assemble message lines.
-        $lines = [
-            sprintf('<b>New order — %s</b>', esc_html($site_name)),
-            '---',
-            sprintf('<b>Order #:</b> <a href="%s">%d</a>', $order_url, $order_id),
-            sprintf('<b>Date:</b> %s', esc_html($date)),
-            sprintf('<b>Status:</b> %s', esc_html($status)),
-            '',
-            '<b>Customer</b>',
-            sprintf('Name: %s', esc_html($full_name)),
-        ];
+        // Header.
+        $lines = Message_Formatter::build_header(__('Нове замовлення', 'telegram-order-notify'));
+
+        // Order Summary.
+        $lines[] = sprintf('<b>%s:</b> <a href="%s">%d</a>', esc_html__('Замовлення #', 'telegram-order-notify'), $order_url, $order_id);
+        $lines[] = sprintf('<b>%s:</b> %s', esc_html__('Дата', 'telegram-order-notify'), esc_html($date));
+        $lines[] = sprintf('<b>%s:</b> %s', esc_html__('Статус', 'telegram-order-notify'), esc_html($status));
+
+        // Order-level Tab / Key if present
+        $order_tab = $order->get_meta('tab') ?: $order->get_meta('tab_key');
+        if (! empty($order_tab)) {
+            $lines[] = sprintf('<b>%s:</b> %s', esc_html__('Таб', 'telegram-order-notify'), esc_html((string) $order_tab));
+        }
+        $order_key = $order->get_meta('key');
+        if (! empty($order_key)) {
+            $lines[] = sprintf('<b>%s:</b> %s', esc_html__('Ключ', 'telegram-order-notify'), esc_html((string) $order_key));
+        }
+
+        // Customer Info.
+        $lines[] = '';
+        $lines[] = '<b>' . esc_html__('Клієнт', 'telegram-order-notify') . '</b>';
+        $lines[] = sprintf('%s: %s', esc_html__('Ім\'я', 'telegram-order-notify'), esc_html($full_name));
 
         if ($email) {
             $lines[] = sprintf('Email: %s', esc_html($email));
         }
         if ($phone) {
-            $lines[] = sprintf('Phone: %s', esc_html($phone));
+            $lines[] = sprintf('%s: %s', esc_html__('Телефон', 'telegram-order-notify'), esc_html($phone));
         }
 
+        // Addresses.
         $lines[] = '';
-        $lines[] = '<b>Billing address</b>';
+        $lines[] = '<b>' . esc_html__('Адреса платника', 'telegram-order-notify') . '</b>';
         $lines[] = $billing_addr;
         $lines[] = '';
-        $lines[] = '<b>Shipping address</b>';
+        $lines[] = '<b>' . esc_html__('Адреса доставки', 'telegram-order-notify') . '</b>';
         $lines[] = $shipping_addr;
-        $lines[] = '';
-        $lines[] = '<b>Items</b>';
 
+        // Items.
+        $lines[] = '';
+        $lines[] = '<b>' . esc_html__('Товари', 'telegram-order-notify') . '</b>';
         foreach ($item_lines as $item_line) {
             $lines[] = $item_line;
         }
 
+        // Payment & Shipping methods.
         $lines[] = '';
-        $lines[] = sprintf('<b>Payment:</b> %s', esc_html($order->get_payment_method_title() ?: '—'));
-        $lines[] = sprintf('<b>Shipping method:</b> %s', esc_html($order->get_shipping_method() ?: '—'));
+        $lines[] = sprintf('<b>%s:</b> %s', esc_html__('Оплата', 'telegram-order-notify'), esc_html($order->get_payment_method_title() ?: '—'));
+        $lines[] = sprintf('<b>%s:</b> %s', esc_html__('Доставка', 'telegram-order-notify'), esc_html($order->get_shipping_method() ?: '—'));
+
+        // Totals.
         $lines[] = '';
-        $lines[] = sprintf('<b>Subtotal:</b> %s', $subtotal);
-        $lines[] = sprintf('<b>Shipping cost:</b> %s', $shipping_total);
+        $lines[] = sprintf('<b>%s:</b> %s', esc_html__('Вартість товарів', 'telegram-order-notify'), $subtotal);
+        $lines[] = sprintf('<b>%s:</b> %s', esc_html__('Вартість доставки', 'telegram-order-notify'), $shipping_total);
 
         return implode("\n", $lines)
             . $discount_line
             . $coupons_line
-            . sprintf("\n<b>Total:</b> %s", $grand_total)
+            . sprintf("\n<b>%s:</b> %s", esc_html__('Разом', 'telegram-order-notify'), $grand_total)
             . $note_line;
-    }
-
-    /**
-     * Converts an address array to a single escaped string.
-     *
-     * @param array<string,string> $address
-     * @return string
-     */
-    private function format_address(array $address): string
-    {
-        $parts = array_filter([
-            $address['address_1'] ?? '',
-            $address['address_2'] ?? '',
-            $address['city']      ?? '',
-            $address['state']     ?? '',
-            $address['postcode']  ?? '',
-            $address['country']   ?? '',
-        ]);
-
-        return esc_html(implode(', ', $parts));
-    }
-
-    /**
-     * Formats a monetary amount stripping wc_price HTML to plain text.
-     *
-     * @param float  $amount
-     * @param string $currency
-     * @return string
-     */
-    private function format_price(float $amount, string $currency): string
-    {
-        return html_entity_decode(
-            strip_tags(wc_price($amount, [ 'currency' => $currency ])),
-            ENT_QUOTES,
-            'UTF-8'
-        );
     }
 }

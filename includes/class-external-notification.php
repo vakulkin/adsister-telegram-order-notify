@@ -40,7 +40,7 @@ final class External_Notification
      */
     public function register_hooks(): void
     {
-        add_action('rest_api_init', [$this, 'register_routes']);
+        add_action('rest_api_init', [ $this, 'register_routes' ]);
     }
 
     /**
@@ -50,7 +50,7 @@ final class External_Notification
     {
         register_rest_route('ton/v1', '/notify', [
             'methods'             => \WP_REST_Server::READABLE,
-            'callback'            => [$this, 'handle_request'],
+            'callback'            => [ $this, 'handle_request' ],
             'permission_callback' => '__return_true', // Publicly accessible
         ]);
     }
@@ -59,8 +59,9 @@ final class External_Notification
      * Handles the GET request and sends the Telegram message.
      *
      * @param \WP_REST_Request $request
+     * @return \WP_REST_Response
      */
-    public function handle_request(\WP_REST_Request $request)
+    public function handle_request(\WP_REST_Request $request): \WP_REST_Response
     {
         $phone       = $request->get_param('phone') ?? '';
         $product_id  = $request->get_param('product_id') ?? '';
@@ -68,57 +69,69 @@ final class External_Notification
         $key         = $request->get_param('key') ?? '';
         $size_ml     = $request->get_param('size_ml') ?? '';
         $atomizer_id = $request->get_param('atomizer_id') ?? '';
+        $label       = $request->get_param('label') ?? '';
 
-        // If phone is empty, it's considered an error based on user instructions.
-        if (empty($phone)) {
-            return $this->send_response(false, 'Введіть коректний номер телефону.');
+        // If phone is empty, it is considered an error.
+        if (empty(trim((string) $phone))) {
+            return $this->send_response(false, __('Введіть коректний номер телефону.', 'telegram-order-notify'));
         }
 
-        // Try to get the product name if WooCommerce is active and product_id is present.
+        // Try to resolve product name if WooCommerce is active and product_id is present.
         $product_name = '';
-        if (!empty($product_id) && function_exists('wc_get_product')) {
+        if (! empty($product_id) && function_exists('wc_get_product')) {
             $product = wc_get_product($product_id);
             if ($product instanceof \WC_Product) {
                 $product_name = $product->get_name();
             }
         }
 
-        $site_name = get_bloginfo('name');
+        $lines = Message_Formatter::build_header(__('Запит на товар', 'telegram-order-notify'));
 
-        $lines = [
-            sprintf('<b>Запит на товар — %s</b>', esc_html($site_name)),
-            '---',
-            '<b>Телефон:</b> ' . esc_html(trim((string)$phone)),
+        $field_phone = Message_Formatter::format_field(__('Телефон', 'telegram-order-notify'), (string) $phone);
+        if ($field_phone) {
+            $lines[] = $field_phone;
+        }
+
+        if (! empty($product_id)) {
+            $product_info = (string) $product_id;
+            if ($product_name) {
+                $product_info .= ' (' . $product_name . ')';
+            }
+            $field_product = Message_Formatter::format_field(__('ID Товару', 'telegram-order-notify'), $product_info);
+            if ($field_product) {
+                $lines[] = $field_product;
+            }
+        }
+
+        $fields = [
+            __('Мітка', 'telegram-order-notify')         => (string) $label,
+            __('Об\'єм (мл)', 'telegram-order-notify')   => (string) $size_ml,
+            __('ID Атомайзера', 'telegram-order-notify') => (string) $atomizer_id,
+            __('Таб', 'telegram-order-notify')           => (string) $tab,
+            __('Ключ', 'telegram-order-notify')          => (string) $key,
         ];
 
-        if (!empty($product_id)) {
-            $product_info = esc_html((string)$product_id);
-            if ($product_name) {
-                $product_info .= ' (' . esc_html($product_name) . ')';
+        foreach ($fields as $field_label => $field_val) {
+            $formatted = Message_Formatter::format_field($field_label, $field_val);
+            if ($formatted) {
+                $lines[] = $formatted;
             }
-            $lines[] = '<b>ID Товару:</b> ' . $product_info;
-        }
-
-        if (!empty($size_ml)) {
-            $lines[] = '<b>Об\'єм (мл):</b> ' . esc_html((string)$size_ml);
-        }
-        if (!empty($atomizer_id)) {
-            $lines[] = '<b>ID Атомайзера:</b> ' . esc_html((string)$atomizer_id);
-        }
-        if (!empty($tab)) {
-            $lines[] = '<b>Таб:</b> ' . esc_html((string)$tab);
-        }
-        if (!empty($key)) {
-            $lines[] = '<b>Ключ:</b> ' . esc_html((string)$key);
         }
 
         $message = implode("\n", $lines);
-        $result  = $this->client->send_message($message);
+
+        /**
+         * Filter external notification message before sending.
+         *
+         * @param string           $message
+         * @param \WP_REST_Request $request
+         */
+        $message = (string) apply_filters('ton_external_notification_message', $message, $request);
+
+        $result = Message_Formatter::send_and_log($this->client, $message, 'external');
 
         if (is_wp_error($result)) {
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-            error_log('[TON] Failed to send external Telegram notification: ' . $result->get_error_message());
-            return $this->send_response(false, 'Помилка при відправці в Telegram.');
+            return $this->send_response(false, __('Помилка при відправці в Telegram.', 'telegram-order-notify'));
         }
 
         return $this->send_response(true);
@@ -131,12 +144,12 @@ final class External_Notification
      * @param string $message
      * @return \WP_REST_Response
      */
-    private function send_response(bool $success, string $message = '')
+    private function send_response(bool $success, string $message = ''): \WP_REST_Response
     {
         $response = new \WP_REST_Response();
 
         if ($success) {
-            $response->set_data(['success' => true]);
+            $response->set_data([ 'success' => true ]);
         } else {
             $response->set_data([
                 'success' => false,
@@ -144,7 +157,7 @@ final class External_Notification
             ]);
         }
 
-        // Ensure CORS header is present as requested
+        // Ensure CORS header is present
         $response->header('Access-Control-Allow-Origin', '*');
 
         return $response;
